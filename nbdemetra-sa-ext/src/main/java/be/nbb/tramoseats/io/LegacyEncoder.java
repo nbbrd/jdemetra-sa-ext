@@ -21,10 +21,8 @@ import ec.satoolkit.tramoseats.TramoSeatsSpecification;
 import ec.tstoolkit.algorithm.ProcessingContext;
 import ec.tstoolkit.data.DataBlock;
 import ec.tstoolkit.maths.matrices.Matrix;
-import ec.tstoolkit.modelling.ComponentType;
 import ec.tstoolkit.modelling.TsVariableDescriptor;
 import ec.tstoolkit.modelling.TsVariableDescriptor.UserComponentType;
-import ec.tstoolkit.modelling.arima.tramo.CalendarSpec;
 import ec.tstoolkit.modelling.arima.tramo.OutlierSpec;
 import ec.tstoolkit.modelling.arima.tramo.TradingDaysSpec;
 import ec.tstoolkit.modelling.arima.tramo.TransformSpec;
@@ -278,9 +276,9 @@ public class LegacyEncoder extends AbstractEncoder {
         openFreeSection();
         for (int i = 0; i < spec.length; ++i) {
             TsPeriod p = new TsPeriod(domain.getFrequency());
-            p.set(spec[i].position);
+            p.set(spec[i].getPosition());
             m_builder.append(sep).append(p.minus(domain.getStart()) + 1).
-                    append(sep).append(spec[i].type.name());
+                    append(sep).append(spec[i].getCode());
         }
         closeSection();
     }

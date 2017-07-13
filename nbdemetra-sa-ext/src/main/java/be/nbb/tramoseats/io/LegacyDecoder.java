@@ -215,7 +215,7 @@ public class LegacyDecoder extends AbstractDecoder {
                 OutlierType ot = OutlierType.valueOf(code.toUpperCase());
                 if (ot != null) {
                     TsPeriod p = domain_.get(pos - 1);
-                    regression.add(new OutlierDefinition(p, ot, true));
+                    regression.add(new OutlierDefinition(p, ot));
                 } else {
                     return 0;
                 }
