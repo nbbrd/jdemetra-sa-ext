@@ -16,6 +16,10 @@
  */
 package be.nbb.tramoseats.io;
 
+import ec.nbdemetra.ui.variables.VariablesDocumentManager;
+import ec.nbdemetra.ws.Workspace;
+import ec.nbdemetra.ws.WorkspaceFactory;
+import ec.nbdemetra.ws.WorkspaceItem;
 import ec.satoolkit.tramoseats.TramoSeatsSpecification;
 import ec.tstoolkit.algorithm.ProcessingContext;
 import ec.tstoolkit.information.InformationSet;
@@ -35,13 +39,16 @@ import ec.tstoolkit.timeseries.simplets.TsDomain;
 import ec.tstoolkit.timeseries.simplets.TsPeriod;
 import ec.tstoolkit.utilities.Arrays2;
 import ec.tstoolkit.utilities.IntList;
+import ec.tstoolkit.utilities.NameManager;
 import ec.tstoolkit.utilities.NamedObject;
+import ec.tstoolkit.utilities.Paths;
 import ec.tstoolkit.utilities.Tokenizer;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -51,7 +58,10 @@ import java.util.Map;
  */
 public class LegacyDecoder extends AbstractDecoder {
 
-    private static final String TEMP = "_ts_temp";
+    private static final String INTERNAL = "_ts_internal";
+    private static final String EXTERNAL = "_ts_external_";
+    private static int idx=0;
+    private static final HashMap<String, String> extFiles=new HashMap<String, String>();
     private File path_;
     private TsDomain domain_;
     private final ProcessingContext context;
@@ -215,7 +225,7 @@ public class LegacyDecoder extends AbstractDecoder {
                 OutlierType ot = OutlierType.valueOf(code.toUpperCase());
                 if (ot != null) {
                     TsPeriod p = domain_.get(pos - 1);
-                    regression.add(new OutlierDefinition(p, ot, true));
+                    regression.add(new OutlierDefinition(p, ot));
                 } else {
                     return 0;
                 }
@@ -281,6 +291,23 @@ public class LegacyDecoder extends AbstractDecoder {
     }
 
     private int readVariables(BufferedReader reader, RegressionSpec regression, boolean external) throws IOException {
+        if (external) {
+            return readExternalVariables(reader, regression);
+        } else {
+            return readInternalVariables(reader, regression);
+        }
+    }
+    
+    private String nameFromFile(String file){
+        String name = extFiles.get(file);
+        if (name == null){
+            name=EXTERNAL+(++idx);
+            extFiles.put(file, name);
+        }
+        return name;
+    }
+
+    private int readExternalVariables(BufferedReader reader, RegressionSpec regression) throws IOException {
         Number n = takeInt(Item.ILONG, elements);
         Number nser = takeInt(Item.NSER, elements);
         Number regeffect = takeInt(Item.REGEFF, elements);
@@ -289,40 +316,32 @@ public class LegacyDecoder extends AbstractDecoder {
         }
         int nvars = nser.intValue();
         String input = reader.readLine();
-
-        ProcessingContext cnt = ec.tstoolkit.algorithm.ProcessingContext.getActiveContext();
-        TsVariables vars = cnt.getTsVariables(TEMP);
-        if (vars == null) {
-            vars = new TsVariables();
-            cnt.getTsVariableManagers().set(TEMP, vars);
-        }
-        String[] names = new String[nvars];
+        String fullName = path_ == null ? input : Paths.concatenate(path_.getAbsolutePath(), input);
+        String vname=nameFromFile(fullName);
+        NameManager<TsVariables> vmgr = ProcessingContext.getActiveContext().getTsVariableManagers();
+        TsVariables vars = vmgr.get(vname);
         boolean needreading = false;
-        if (external) {
-            int ip = input.indexOf('.');
-            String ninput = ip < 0 ? input : input.substring(0, ip);
-            for (int i = 0; i < nvars; ++i) {
-                names[i] = ninput + '_' + i;
-                if (!vars.contains(names[i])) {
-                    needreading = true;
-                }
-            }
-        } else {
-            for (int i = 0; i < nvars; ++i) {
-                names[i] = vars.nextName();
-            }
+        if (vars == null) {
+            Workspace ws = WorkspaceFactory.getInstance().getActiveWorkspace();
+            VariablesDocumentManager mgr = WorkspaceFactory.getInstance().getManager(VariablesDocumentManager.class);
+            WorkspaceItem<TsVariables> item = mgr.create(ws);
+            vars = item.getElement();
+            vmgr.rename(item.getDisplayName(), vname);
+            item.setDisplayName(vname);
             needreading = true;
         }
-
+        String[] names = new String[nvars];
+        int ip = input.indexOf('.');
+        String ninput = ip < 0 ? input : input.substring(0, ip);
+        for (int i = 0; i < nvars; ++i) {
+            names[i] = ninput + '_' + i;
+        }
         if (needreading) {
-            Matrix M = external ? readExternalMatrix(n.intValue(), nvars, input)
-                    : readMatrix(n.intValue(), nser.intValue(), input);
+            Matrix M = readExternalMatrix(n.intValue(), nvars, input);
             if (M != null) {
                 for (int i = 0; i < nvars; ++i) {
-                    if (!vars.contains(names[i])) {
-                        TsVariable cvar = new TsVariable(names[i], new TsData(domain_.getStart(), M.column(i)));
-                        vars.set(names[i], cvar);
-                    }
+                    TsVariable cvar = new TsVariable(names[i], new TsData(domain_.getStart(), M.column(i)));
+                    vars.set(names[i], cvar);
                 }
             } else {
                 return nser.intValue();
@@ -331,10 +350,72 @@ public class LegacyDecoder extends AbstractDecoder {
         ArrayList<String> cdesc = new ArrayList<>();
         for (int i = 0; i < nvars; ++i) {
             if (regeffect != null && regeffect.intValue() == 6) {
-                cdesc.add(InformationSet.item(TEMP, names[i]));
+                cdesc.add(InformationSet.item(vname, names[i]));
             } else {
                 TsVariableDescriptor desc = new TsVariableDescriptor();
-                desc.setName(InformationSet.item(TEMP, names[i]));
+                desc.setName(InformationSet.item(vname, names[i]));
+                if (regeffect != null) {
+                    desc.setEffect(convert(regeffect.intValue()));
+                }
+                regression.add(desc);
+            }
+        }
+        if (!cdesc.isEmpty()) {
+            TradingDaysSpec td = regression.getCalendar().getTradingDays();
+            String[] ntd = new String[cdesc.size()];
+            ntd = cdesc.toArray(ntd);
+            String[] oldtd = td.getUserVariables();
+            if (oldtd != null) {
+                ntd = Arrays2.concat(oldtd, ntd);
+            }
+            td.setUserVariables(ntd);
+        }
+        return nser.intValue();
+    }
+
+    private int readInternalVariables(BufferedReader reader, RegressionSpec regression) throws IOException {
+        Number n = takeInt(Item.ILONG, elements);
+        Number nser = takeInt(Item.NSER, elements);
+        Number regeffect = takeInt(Item.REGEFF, elements);
+        if (n == null || nser == null) {
+            return 0;
+        }
+        int nvars = nser.intValue();
+        String input = reader.readLine();
+        NameManager<TsVariables> vmgr = ProcessingContext.getActiveContext().getTsVariableManagers();
+        TsVariables vars = vmgr.get(INTERNAL);
+        if (vars == null) {
+            Workspace ws = WorkspaceFactory.getInstance().getActiveWorkspace();
+            VariablesDocumentManager mgr = WorkspaceFactory.getInstance().getManager(VariablesDocumentManager.class);
+            WorkspaceItem<TsVariables> item = mgr.create(ws);
+            vars = item.getElement();
+            vmgr.rename(item.getDisplayName(), INTERNAL);
+            item.setDisplayName(INTERNAL);
+        }
+        String[] names = new String[nvars];
+        for (int i = 0; i < nvars; ++i) {
+            names[i] = vars.nextName();
+        }
+
+        Matrix M = readMatrix(n.intValue(), nser.intValue(), input);
+        if (M != null) {
+            for (int i = 0; i < nvars; ++i) {
+                if (!vars.contains(names[i])) {
+                    TsVariable cvar = new TsVariable(names[i], new TsData(domain_.getStart(), M.column(i)));
+                    vars.set(names[i], cvar);
+                }
+            }
+        } else {
+            return nser.intValue();
+        }
+
+        ArrayList<String> cdesc = new ArrayList<>();
+        for (int i = 0; i < nvars; ++i) {
+            if (regeffect != null && regeffect.intValue() == 6) {
+                cdesc.add(InformationSet.item(INTERNAL, names[i]));
+            } else {
+                TsVariableDescriptor desc = new TsVariableDescriptor();
+                desc.setName(InformationSet.item(INTERNAL, names[i]));
                 if (regeffect != null) {
                     desc.setEffect(convert(regeffect.intValue()));
                 }
