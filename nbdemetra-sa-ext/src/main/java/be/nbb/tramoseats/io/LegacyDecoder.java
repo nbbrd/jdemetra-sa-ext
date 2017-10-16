@@ -16,6 +16,10 @@
  */
 package be.nbb.tramoseats.io;
 
+import ec.nbdemetra.ui.variables.VariablesDocumentManager;
+import ec.nbdemetra.ws.Workspace;
+import ec.nbdemetra.ws.WorkspaceFactory;
+import ec.nbdemetra.ws.WorkspaceItem;
 import ec.satoolkit.tramoseats.TramoSeatsSpecification;
 import ec.tstoolkit.algorithm.ProcessingContext;
 import ec.tstoolkit.information.InformationSet;
@@ -44,6 +48,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  *
@@ -51,7 +56,8 @@ import java.util.Map;
  */
 public class LegacyDecoder extends AbstractDecoder {
 
-    private static final String TEMP = "_ts_temp";
+    private static final String TEMP = "ts_variables_";
+    private AtomicInteger counter=new AtomicInteger(1);
     private File path_;
     private TsDomain domain_;
     private final ProcessingContext context;
@@ -279,6 +285,10 @@ public class LegacyDecoder extends AbstractDecoder {
     protected String nextRegs(BufferedReader reader) {
         return nextItem(LegacyEncoder.REG_, reader);
     }
+    
+    private String nextName(){
+        return TEMP+counter.getAndAdd(1);
+    }
 
     private int readVariables(BufferedReader reader, RegressionSpec regression, boolean external) throws IOException {
         Number n = takeInt(Item.ILONG, elements);
@@ -290,11 +300,17 @@ public class LegacyDecoder extends AbstractDecoder {
         int nvars = nser.intValue();
         String input = reader.readLine();
 
+        Workspace ws = WorkspaceFactory.getInstance().getActiveWorkspace();
+        VariablesDocumentManager mgr = WorkspaceFactory.getInstance().getManager(VariablesDocumentManager.class);
+        WorkspaceItem<TsVariables> item = mgr.create(ws);
+        String vname=nextName();
+        item.setDisplayName(vname);
+        item.setIdentifier(vname);
+        TsVariables vars = item.getElement();
         ProcessingContext cnt = ec.tstoolkit.algorithm.ProcessingContext.getActiveContext();
-        TsVariables vars = cnt.getTsVariables(TEMP);
         if (vars == null) {
             vars = new TsVariables();
-            cnt.getTsVariableManagers().set(TEMP, vars);
+            cnt.getTsVariableManagers().set(vname, vars);
         }
         String[] names = new String[nvars];
         boolean needreading = false;
